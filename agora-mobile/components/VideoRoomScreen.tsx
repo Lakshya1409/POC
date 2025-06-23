@@ -130,28 +130,30 @@ const VideoRoomScreen = ({
 
   const join = useCallback(async () => {
     try {
-      console.log('Hello');
-      // const response = await fetch(
-      //   `http://192.168.0.112:3000/rtcToken?channelName=${encodeURIComponent(
-      //     channelName,
-      //   )}&uid=${user.id}&role=publisher`,
-      // );
-      // console.log(response);
+      console.log(
+        'Requesting token for UID:',
+        user.id,
+        'channel:',
+        channelName,
+      );
       const response = await fetch(
-        `http://10.0.2.2:3000/rtcToken?channelName=${encodeURIComponent(
+        `http://172.16.7.112:3000/rtcToken?channelName=${encodeURIComponent(
           channelName,
         )}&uid=${user.id}&role=publisher`,
       );
       if (!response.ok) throw new Error('Failed to fetch token from backend');
       const data = await response.json();
-      console.log(data);
       const token = data.token;
+      console.log('Received token:', token);
       if (!token) throw new Error('No token received from backend');
 
       await agoraEngineRef.current.setClientRole(
         ClientRoleType.ClientRoleBroadcaster,
       );
+      console.log('Set client role to broadcaster for UID:', user.id);
+
       await agoraEngineRef.current.joinChannel(token, channelName, user.id, {});
+      console.log('Called joinChannel with UID:', user.id, 'token:', token);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       Alert.alert('Join Failed', msg);
