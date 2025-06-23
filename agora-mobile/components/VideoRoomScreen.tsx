@@ -11,6 +11,7 @@ import {
   Platform,
   ScrollView,
   FlatList,
+  PermissionsAndroid,
 } from 'react-native';
 import {
   ClientRoleType,
@@ -24,6 +25,29 @@ interface VideoRoomScreenProps {
   user: { id: number; name: string; enrolledMeetings: string[] };
   channelName: string;
   onLeave: () => void;
+}
+
+// Request camera and audio permissions before initializing Agora
+async function requestCameraAndAudioPermission() {
+  if (Platform.OS === 'android') {
+    try {
+      const granted = await PermissionsAndroid.requestMultiple([
+        PermissionsAndroid.PERMISSIONS.CAMERA,
+        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+      ]);
+      return (
+        granted['android.permission.CAMERA'] ===
+          PermissionsAndroid.RESULTS.GRANTED &&
+        granted['android.permission.RECORD_AUDIO'] ===
+          PermissionsAndroid.RESULTS.GRANTED
+      );
+    } catch (err) {
+      console.warn(err);
+      return false;
+    }
+  }
+  // On iOS, permissions are handled automatically by the system prompt
+  return true;
 }
 
 const VideoRoomScreen = ({
@@ -48,15 +72,27 @@ const VideoRoomScreen = ({
 
   useEffect(() => {
     const setup = async () => {
+      // Request permissions before initializing Agora
+      const hasPermission = await requestCameraAndAudioPermission();
+      if (!hasPermission) {
+        Alert.alert(
+          'Permissions required',
+          'Camera and microphone permissions are required.',
+        );
+        return;
+      }
+      // For screen sharing on Android, RECORD_AUDIO and FOREGROUND_SERVICE permissions are required.
+      // On iOS, screen sharing permissions are handled by the system.
       agoraEngineRef.current = createAgoraRtcEngine();
       const agoraEngine = agoraEngineRef.current;
 
       agoraEngine.addListener('onJoinChannelSuccess', () => setIsJoined(true));
-      agoraEngine.addListener('onUserJoined', (_: any, remoteUid: number) =>
+      agoraEngine.addListener('onUserJoined', (_: any, remoteUid: number) => {
+        console.log('Remote user joined:', remoteUid);
         setRemoteUids((prev: number[]) =>
           prev.includes(remoteUid) ? prev : [...prev, remoteUid],
-        ),
-      );
+        );
+      });
       agoraEngine.addListener('onUserOffline', (_: any, remoteUid: number) =>
         setRemoteUids((prev: number[]) =>
           prev.filter((uid: number) => uid !== remoteUid),
@@ -94,6 +130,13 @@ const VideoRoomScreen = ({
 
   const join = useCallback(async () => {
     try {
+      console.log('Hello');
+      // const response = await fetch(
+      //   `http://192.168.0.112:3000/rtcToken?channelName=${encodeURIComponent(
+      //     channelName,
+      //   )}&uid=${user.id}&role=publisher`,
+      // );
+      // console.log(response);
       const response = await fetch(
         `http://10.0.2.2:3000/rtcToken?channelName=${encodeURIComponent(
           channelName,
@@ -101,6 +144,7 @@ const VideoRoomScreen = ({
       );
       if (!response.ok) throw new Error('Failed to fetch token from backend');
       const data = await response.json();
+      console.log(data);
       const token = data.token;
       if (!token) throw new Error('No token received from backend');
 
@@ -211,7 +255,7 @@ const VideoRoomScreen = ({
     setMaximizedUid(maximizedUid === uid ? null : uid);
   };
 
-  const allVideoUids = [0, ...remoteUids];
+  const allVideoUids = [user.id, ...remoteUids];
   const { width, height } = Dimensions.get('window');
   const usersPerPage = 4;
   const totalPages = Math.ceil(allVideoUids.length / usersPerPage);
@@ -290,7 +334,9 @@ const VideoRoomScreen = ({
               style={[
                 styles.videoTile,
                 videoStyle,
-                uid === 0 ? styles.localVideoTile : styles.remoteVideoTile,
+                uid === user.id
+                  ? styles.localVideoTile
+                  : styles.remoteVideoTile,
                 isSpecialLayout && styles.centerVideoTile,
               ]}
             >
@@ -300,7 +346,7 @@ const VideoRoomScreen = ({
                   canvas={{
                     uid,
                     sourceType:
-                      uid === 0 && isScreenSharing
+                      uid === user.id && isScreenSharing
                         ? VideoSourceType.VideoSourceScreen
                         : VideoSourceType.VideoSourceCamera,
                   }}
@@ -311,8 +357,8 @@ const VideoRoomScreen = ({
                 <View style={styles.videoTopSection}>
                   <View style={styles.nameTag}>
                     <Text style={styles.nameText}>
-                      {uid === 0 ? 'You' : `User ${uid}`}
-                      {uid === 0 && isScreenSharing && ' 🖥️'}
+                      {uid === user.id ? 'You' : `User ${uid}`}
+                      {uid === user.id && isScreenSharing && ' 🖥️'}
                     </Text>
                   </View>
                   <TouchableOpacity
@@ -323,7 +369,7 @@ const VideoRoomScreen = ({
                   </TouchableOpacity>
                 </View>
                 <View style={styles.videoBottomSection}>
-                  {uid === 0 && (
+                  {uid === user.id && (
                     <View style={styles.statusIcons}>
                       <View
                         style={[
@@ -392,7 +438,7 @@ const VideoRoomScreen = ({
 
   const participants = [
     {
-      uid: 0,
+      uid: user.id,
       name: user.name,
       isLocal: true,
       mic: isMicEnabled,
@@ -430,7 +476,7 @@ const VideoRoomScreen = ({
                 canvas={{
                   uid: maximizedUid,
                   sourceType:
-                    maximizedUid === 0 && isScreenSharing
+                    maximizedUid === user.id && isScreenSharing
                       ? VideoSourceType.VideoSourceScreen
                       : VideoSourceType.VideoSourceCamera,
                 }}
@@ -439,8 +485,8 @@ const VideoRoomScreen = ({
 
             <View style={styles.maximizedVideoOverlay}>
               <Text style={styles.maximizedVideoName}>
-                {maximizedUid === 0 ? 'You' : `User ${maximizedUid}`}
-                {maximizedUid === 0 && isScreenSharing && ' (Screen)'}
+                {maximizedUid === user.id ? 'You' : `User ${maximizedUid}`}
+                {maximizedUid === user.id && isScreenSharing && ' (Screen)'}
               </Text>
             </View>
           </View>
