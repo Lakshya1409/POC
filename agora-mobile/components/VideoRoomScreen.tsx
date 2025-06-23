@@ -86,7 +86,16 @@ const VideoRoomScreen = ({
       agoraEngineRef.current = createAgoraRtcEngine();
       const agoraEngine = agoraEngineRef.current;
 
-      agoraEngine.addListener('onJoinChannelSuccess', () => setIsJoined(true));
+      agoraEngine.addListener(
+        'onJoinChannelSuccess',
+        (
+          connection: { channelId: string; localUid: number },
+          elapsed: number,
+        ) => {
+          console.log('Join channel success:', connection, elapsed);
+          setIsJoined(true);
+        },
+      );
       agoraEngine.addListener('onUserJoined', (_: any, remoteUid: number) => {
         console.log('Remote user joined:', remoteUid);
         setRemoteUids((prev: number[]) =>
