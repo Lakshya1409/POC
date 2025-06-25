@@ -92,7 +92,7 @@ const VideoRoomScreen = ({
   const join = async () => {
     try {
       const response = await fetch(
-        `http://172.16.7.112:3000/rtcToken?channelName=${encodeURIComponent(
+        `http://192.168.0.105:8001/rtcToken?channelName=${encodeURIComponent(
           channelName,
         )}&uid=${user.id}&role=publisher`,
       );
