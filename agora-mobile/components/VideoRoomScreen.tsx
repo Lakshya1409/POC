@@ -8,14 +8,19 @@ import {
   Dimensions,
   StyleSheet,
   FlatList,
-  Platform,
+  ScrollView,
 } from 'react-native';
 import {
   ClientRoleType,
   createAgoraRtcEngine,
   ChannelProfileType,
   RtcSurfaceView,
+  VideoSourceType,
 } from 'react-native-agora';
+// import CallChat from './CallChat';
+
+const backendUrl = 'http://172.16.11.52:8001';
+// const backendUrl='http://192.168.0.105:8001'
 
 interface VideoRoomScreenProps {
   user: { id: number; name: string; enrolledMeetings: string[] };
@@ -39,6 +44,12 @@ const VideoRoomScreen = ({
   >(null);
   const agoraEngineRef = useRef<any>(null);
   const [currentPage, setCurrentPage] = useState(0);
+  const [chatVisible, setChatVisible] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  // Track remote users' video states
+  const [remoteVideoStates, setRemoteVideoStates] = useState<{
+    [uid: number]: boolean;
+  }>({});
 
   useEffect(() => {
     const setup = async () => {
@@ -92,7 +103,7 @@ const VideoRoomScreen = ({
   const join = async () => {
     try {
       const response = await fetch(
-        `http://172.16.7.112:3000/rtcToken?channelName=${encodeURIComponent(
+        `${backendUrl}/rtcToken?channelName=${encodeURIComponent(
           channelName,
         )}&uid=${user.id}&role=publisher`,
       );
@@ -150,6 +161,50 @@ const VideoRoomScreen = ({
     }
   };
 
+  // --- Screen Sharing Logic ---
+  const startScreenShare = async () => {
+    if (!agoraEngineRef.current) return;
+    try {
+      await agoraEngineRef.current.startScreenCapture({
+        captureAudio: true,
+        captureVideo: true,
+        videoCaptureParameters: {
+          dimensions: { width: 1280, height: 720 },
+          frameRate: 15,
+          bitrate: 2000,
+        },
+        audioCaptureParameters: {
+          sampleRate: 44100,
+          channel: 2,
+          captureSignalVolume: 100,
+        },
+      });
+      await agoraEngineRef.current.updateChannelMediaOptions({
+        publishCameraTrack: false,
+        publishScreenCaptureVideo: true,
+        publishScreenCaptureAudio: true,
+      });
+      setIsScreenSharing(true);
+    } catch (error) {
+      Alert.alert('Screen Share Error', String(error));
+    }
+  };
+
+  const stopScreenShare = async () => {
+    if (!agoraEngineRef.current) return;
+    try {
+      await agoraEngineRef.current.stopScreenCapture();
+      await agoraEngineRef.current.updateChannelMediaOptions({
+        publishCameraTrack: true,
+        publishScreenCaptureVideo: false,
+        publishScreenCaptureAudio: false,
+      });
+      setIsScreenSharing(false);
+    } catch (error) {
+      Alert.alert('Screen Share Error', String(error));
+    }
+  };
+
   const allVideoUids = [0, ...remoteUids];
   const usersPerPage = 4;
   const totalPages = Math.ceil(allVideoUids.length / usersPerPage);
@@ -176,82 +231,234 @@ const VideoRoomScreen = ({
     })),
   ];
 
+  // Helper function to get user display name
+  const getUserDisplayName = (uid: number) => {
+    if (uid === 0) {
+      return user.name || `User ${user.id}`;
+    }
+    // You can extend this to fetch actual names from your backend
+    return `User ${uid}`;
+  };
+
+  // Helper function to get user initials for placeholder
+  const getUserInitials = (name: string) => {
+    if (!name) return 'TU'; // Default user name initials if no name present
+    return name
+      .split(' ')
+      .map(word => word.charAt(0))
+      .join('')
+      .toUpperCase()
+      .slice(0, 2);
+  };
+
+  // Helper function to check if video should be shown
+  const shouldShowVideo = (uid: number) => {
+    if (uid === 0) {
+      return isCameraEnabled;
+    }
+    return remoteVideoStates[uid] !== false; // Show video by default until we know it's off
+  };
+
+  // Render video tile with placeholder and name overlay
+  const renderVideoTile = (uid: number, style: any) => {
+    const showVideo = shouldShowVideo(uid);
+    const displayName = getUserDisplayName(uid);
+    const initials = getUserInitials(displayName);
+
+    return (
+      <View style={[style, { position: 'relative' }]}>
+        {showVideo && isEngineReady ? (
+          <RtcSurfaceView style={styles.videoView} canvas={{ uid }} />
+        ) : (
+          // Placeholder when camera is off
+          <View style={styles.placeholderBg}>
+            <View style={styles.avatarCircle}>
+              <Text style={styles.avatarText}>{initials}</Text>
+            </View>
+          </View>
+        )}
+        {/* Name overlay - always visible */}
+        <View style={styles.simpleNameOverlay}>
+          <Text style={styles.simpleNameText}>{displayName}</Text>
+        </View>
+      </View>
+    );
+  };
+
   // --- Render Video Tiles for a Page ---
   const renderVideoPage = ({ item: uids }: { item: number[] }) => {
     const numTiles = uids.length;
     const { width, height } = Dimensions.get('window');
     // Calculate available height: minus top bar and bottom controls
-    const topBarHeight = 56 + (Platform.OS === 'ios' ? 44 : 24);
-    const bottomBarHeight = 90;
+    const topBarHeight = 56 + 24; // Approximate for Android/iOS
+    const bottomBarHeight = 106; // Matches paddingBottom
     const availableHeight = height - topBarHeight - bottomBarHeight;
-    let gridStyle: any = {
-      flex: 1,
-      justifyContent: 'center',
-      alignItems: 'center',
-      width,
-    };
-    let tileStyle: any = { width: width - 32, height: availableHeight };
-    if (numTiles === 2) {
-      gridStyle = {
-        flex: 1,
-        flexDirection: 'column',
-        justifyContent: 'center',
-        alignItems: 'center',
-        width,
-      };
-      tileStyle = { width: width - 32, height: availableHeight / 2 - 8 };
-    } else if (numTiles > 2) {
-      gridStyle = {
-        flex: 1,
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        justifyContent: 'center',
-        alignItems: 'center',
-        width,
-      };
-      tileStyle = {
-        width: (width - 40) / 2,
-        height: (availableHeight - 16) / 2,
-      };
-    }
-    return (
-      <View style={gridStyle}>
-        {uids.map((uid: number, _: number) => (
+    const gap = 8;
+
+    if (numTiles === 1) {
+      // Single user: full tile
+      return (
+        <View
+          style={{
+            flex: 1,
+            justifyContent: 'center',
+            alignItems: 'center',
+            width,
+          }}
+        >
+          {renderVideoTile(uids[0], {
+            width: width - 32,
+            height: availableHeight,
+            borderRadius: 16,
+            overflow: 'hidden',
+          })}
+        </View>
+      );
+    } else if (numTiles === 2) {
+      // Two users: vertical split
+      return (
+        <View
+          style={{
+            flex: 1,
+            flexDirection: 'column',
+            justifyContent: 'center',
+            alignItems: 'center',
+            width,
+          }}
+        >
+          {[0, 1].map(i =>
+            renderVideoTile(uids[i], {
+              width: width - 32,
+              height: (availableHeight - gap) / 2,
+              marginBottom: i === 0 ? gap : 0,
+              borderRadius: 16,
+              overflow: 'hidden',
+            }),
+          )}
+        </View>
+      );
+    } else if (numTiles === 3) {
+      // Three users: two tiles on top row, one tile on bottom row
+      const tileHeight = (availableHeight - gap) / 2;
+      const tileWidth = (width - 32 - gap) / 2;
+      return (
+        <View
+          style={{
+            flex: 1,
+            width,
+            justifyContent: 'center',
+            alignItems: 'center',
+          }}
+        >
           <View
-            key={uid}
-            style={[
-              styles.videoContainer,
-              tileStyle,
-              uid === 0 ? styles.localBorder : null,
-            ]}
+            style={{
+              flexDirection: 'row',
+              width: width - 32,
+              height: tileHeight,
+              marginBottom: gap,
+            }}
           >
-            {isEngineReady && (
-              <RtcSurfaceView style={styles.videoView} canvas={{ uid }} />
-            )}
-            <View style={styles.overlayTop}>
-              <Text style={styles.overlayText}>
-                {uid === 0 ? 'You' : `User ${uid}`}
-              </Text>
-            </View>
-            {uid === 0 && (
-              <View style={styles.overlayBottom}>
-                <Text
-                  style={{
-                    color: isCameraEnabled ? '#0f0' : '#f00',
-                    marginRight: 8,
-                  }}
-                >
-                  {isCameraEnabled ? '📹' : '🚫'}
-                </Text>
-                <Text style={{ color: isMicEnabled ? '#0f0' : '#f00' }}>
-                  {isMicEnabled ? '🎤' : '🔇'}
-                </Text>
-              </View>
+            {[0, 1].map(i =>
+              renderVideoTile(uids[i], {
+                width: tileWidth,
+                height: tileHeight,
+                marginRight: i === 0 ? gap : 0,
+                borderRadius: 16,
+                overflow: 'hidden',
+              }),
             )}
           </View>
-        ))}
-      </View>
-    );
+          <View
+            style={{
+              width: width - 32,
+              height: tileHeight,
+              borderRadius: 16,
+              overflow: 'hidden',
+            }}
+          >
+            {renderVideoTile(uids[2], {
+              width: width - 32,
+              height: tileHeight,
+              borderRadius: 16,
+              overflow: 'hidden',
+            })}
+          </View>
+        </View>
+      );
+    } else if (numTiles === 4) {
+      // Four users: 2x2 grid of squares
+      const tileHeight = (availableHeight - gap) / 2;
+      const tileWidth = (width - 32 - gap) / 2;
+      return (
+        <View
+          style={{
+            flex: 1,
+            width,
+            justifyContent: 'center',
+            alignItems: 'center',
+          }}
+        >
+          <View
+            style={{
+              flexDirection: 'row',
+              width: width - 32,
+              height: tileHeight,
+              marginBottom: gap,
+            }}
+          >
+            {[0, 1].map(i =>
+              renderVideoTile(uids[i], {
+                width: tileWidth,
+                height: tileHeight,
+                marginRight: i === 0 ? gap : 0,
+                borderRadius: 16,
+                overflow: 'hidden',
+              }),
+            )}
+          </View>
+          <View
+            style={{
+              flexDirection: 'row',
+              width: width - 32,
+              height: tileHeight,
+            }}
+          >
+            {[2, 3].map(i =>
+              renderVideoTile(uids[i], {
+                width: tileWidth,
+                height: tileHeight,
+                marginRight: i === 2 ? gap : 0,
+                borderRadius: 16,
+                overflow: 'hidden',
+              }),
+            )}
+          </View>
+        </View>
+      );
+    } else {
+      // Fallback: default to vertical list
+      return (
+        <View
+          style={{
+            flex: 1,
+            flexDirection: 'column',
+            justifyContent: 'center',
+            alignItems: 'center',
+            width,
+          }}
+        >
+          {uids.map(uid =>
+            renderVideoTile(uid, {
+              width: width - 32,
+              height: 120,
+              marginBottom: gap,
+              borderRadius: 16,
+              overflow: 'hidden',
+            }),
+          )}
+        </View>
+      );
+    }
   };
 
   return (
@@ -281,30 +488,37 @@ const VideoRoomScreen = ({
           </Text>
         </View>
       )}
-      {/* Video Grid with Pagination */}
-      <FlatList
-        data={pagedUids}
-        renderItem={renderVideoPage}
-        keyExtractor={(_, idx) => `page-${idx}`}
-        horizontal
-        pagingEnabled
-        showsHorizontalScrollIndicator={false}
-        onMomentumScrollEnd={e => {
-          const page = Math.round(
-            e.nativeEvent.contentOffset.x / Dimensions.get('window').width,
-          );
-          setCurrentPage(page);
-        }}
-        style={{ flex: 1 }}
-      />
-      {/* Page Indicator (dots) */}
+      {/* Video Grid with Pagination (add wrapper with paddingBottom) */}
+      <View style={{ flex: 1, paddingBottom: 106 }}>
+        <FlatList
+          data={pagedUids}
+          renderItem={renderVideoPage}
+          keyExtractor={(_, idx) => `page-${idx}`}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          onMomentumScrollEnd={e => {
+            const page = Math.round(
+              e.nativeEvent.contentOffset.x / Dimensions.get('window').width,
+            );
+            setCurrentPage(page);
+          }}
+          style={{ flex: 1 }}
+        />
+      </View>
+      {/* Page Indicator (dots) - absolutely above the control bar */}
       {totalPages > 1 && (
         <View
           style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            bottom: 80, // just above the control bar (fabBarFixed)
             flexDirection: 'row',
             justifyContent: 'center',
             alignItems: 'center',
-            paddingVertical: 8,
+            zIndex: 150,
+            paddingVertical: 4,
           }}
         >
           {Array.from({ length: totalPages }, (_, i) => (
@@ -324,28 +538,65 @@ const VideoRoomScreen = ({
       )}
       {/* Bottom Floating Controls */}
       <View style={styles.fabBarFixed}>
-        <TouchableOpacity style={styles.fab} onPress={toggleMic}>
-          <Text style={styles.fabIcon}>{isMicEnabled ? '🎤' : '🔇'}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.fab} onPress={toggleCamera}>
-          <Text style={styles.fabIcon}>{isCameraEnabled ? '📹' : '🚫'}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.fab} onPress={switchCamera}>
-          <Text style={styles.fabIcon}>🔄</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.fab}
-          onPress={() => setShowParticipants(true)}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.fabBarScroll}
         >
-          <Text style={styles.fabIcon}>👥</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.fab, { backgroundColor: '#dc3545' }]}
-          onPress={leave}
-        >
-          <Text style={styles.fabIcon}>🚪</Text>
-        </TouchableOpacity>
+          <TouchableOpacity style={styles.iconBtn} onPress={toggleMic}>
+            <Text style={styles.iconText}>{isMicEnabled ? '🎤' : '🔇'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.iconBtn} onPress={toggleCamera}>
+            <Text style={styles.iconText}>{isCameraEnabled ? '📹' : '🚫'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.iconBtn} onPress={switchCamera}>
+            <Text style={styles.iconText}>🔄</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.iconBtn,
+              isScreenSharing && { backgroundColor: '#007AFF' },
+            ]}
+            onPress={isScreenSharing ? stopScreenShare : startScreenShare}
+          >
+            <Text style={styles.iconText}>{isScreenSharing ? '🛑' : '🖥️'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.iconBtn}
+            onPress={() => setShowParticipants(true)}
+          >
+            <Text style={styles.iconText}>👥</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.iconBtn} onPress={leave}>
+            <Text style={styles.iconText}>🚪</Text>
+          </TouchableOpacity>
+          {/* <TouchableOpacity
+            style={styles.iconBtn}
+            onPress={() => setChatVisible(true)}
+          >
+            <Text style={styles.iconText}>💬</Text>
+          </TouchableOpacity> */}
+        </ScrollView>
       </View>
+      {/* Screen Sharing Banner */}
+      {isScreenSharing && (
+        <View
+          style={{
+            position: 'absolute',
+            top: 60,
+            left: 0,
+            right: 0,
+            backgroundColor: '#007AFF',
+            padding: 8,
+            zIndex: 200,
+            alignItems: 'center',
+          }}
+        >
+          <Text style={{ color: '#fff', fontWeight: 'bold' }}>
+            You are sharing your screen
+          </Text>
+        </View>
+      )}
       {/* Participants Modal */}
       {showParticipants && (
         <View style={styles.participantModalOverlay}>
@@ -369,6 +620,14 @@ const VideoRoomScreen = ({
           </View>
         </View>
       )}
+      {/* <CallChat
+        userId={user.id}
+        userName={user.name}
+        channelName={channelName}
+        visible={chatVisible}
+        onClose={() => setChatVisible(false)}
+        backendUrl={backendUrl}
+      /> */}
     </SafeAreaView>
   );
 };
@@ -483,27 +742,28 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(20,20,20,0.95)',
     borderTopWidth: 1,
     borderTopColor: '#232323',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingBottom: 16,
+    paddingBottom: 12,
     paddingTop: 8,
     zIndex: 100,
   },
-  fab: {
-    backgroundColor: '#007AFF',
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+  fabBarScroll: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingHorizontal: 8,
+  },
+  iconBtn: {
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    borderRadius: 18,
+    marginHorizontal: 2,
     alignItems: 'center',
     justifyContent: 'center',
-    marginHorizontal: 10,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOpacity: 0.18,
-    shadowRadius: 8,
   },
-  fabIcon: { fontSize: 26, color: '#fff' },
+  iconText: {
+    fontSize: 28,
+    color: '#fff',
+  },
   participantModalOverlay: {
     position: 'absolute',
     top: 0,
@@ -544,6 +804,50 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     marginTop: 18,
+  },
+  placeholderBg: {
+    flex: 1,
+    backgroundColor: '#2d3748',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 16,
+  },
+  placeholderText: {
+    color: '#fff',
+    fontSize: 36,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  simpleNameOverlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingVertical: 6,
+    alignItems: 'center',
+    borderBottomLeftRadius: 16,
+    borderBottomRightRadius: 16,
+  },
+  simpleNameText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+  },
+  avatarCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#007AFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  avatarText: {
+    color: '#fff',
+    fontSize: 28,
+    fontWeight: 'bold',
   },
 });
 
