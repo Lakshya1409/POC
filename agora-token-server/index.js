@@ -244,6 +244,28 @@ app.get("/chattoken/:username", async (req, res) => {
   }
 });
 
+// Add this to your backend if not already present
+app.get("/rtmToken", (req, res) => {
+  const userId = req.query.userId;
+  if (!userId) {
+    return res.status(400).json({ error: "userId is required" });
+  }
+
+  const expireTime = 3600;
+  const currentTimestamp = Math.floor(Date.now() / 1000);
+  const privilegeExpireTs = currentTimestamp + expireTime;
+
+  const token = RtmTokenBuilder.buildToken(
+    APP_ID,
+    APP_CERTIFICATE,
+    userId,
+    RtmRole.Rtm_User,
+    privilegeExpireTs
+  );
+
+  res.json({ token });
+});
+
 // --- Root Endpoint ---
 app.get("/", (req, res) => {
   res.send("Agora Token Server is running. Endpoints: /rtcToken, /chatToken");

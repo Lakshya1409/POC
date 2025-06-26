@@ -8,7 +8,7 @@ import {
   Dimensions,
   StyleSheet,
   FlatList,
-  Platform,
+  ScrollView,
 } from 'react-native';
 import {
   ClientRoleType,
@@ -16,6 +16,10 @@ import {
   ChannelProfileType,
   RtcSurfaceView,
 } from 'react-native-agora';
+import CallChat from './CallChat';
+
+const backendUrl = 'http://172.16.11.52:8001';
+// const backendUrl='http://192.168.0.105:8001'
 
 interface VideoRoomScreenProps {
   user: { id: number; name: string; enrolledMeetings: string[] };
@@ -39,6 +43,7 @@ const VideoRoomScreen = ({
   >(null);
   const agoraEngineRef = useRef<any>(null);
   const [currentPage, setCurrentPage] = useState(0);
+  const [chatVisible, setChatVisible] = useState(false);
 
   useEffect(() => {
     const setup = async () => {
@@ -92,7 +97,7 @@ const VideoRoomScreen = ({
   const join = async () => {
     try {
       const response = await fetch(
-        `http://192.168.0.105:8001/rtcToken?channelName=${encodeURIComponent(
+        `${backendUrl}/rtcToken?channelName=${encodeURIComponent(
           channelName,
         )}&uid=${user.id}&role=publisher`,
       );
@@ -179,18 +184,15 @@ const VideoRoomScreen = ({
   // --- Render Video Tiles for a Page ---
   const renderVideoPage = ({ item: uids }: { item: number[] }) => {
     const numTiles = uids.length;
-    const { width, height } = Dimensions.get('window');
-    // Calculate available height: minus top bar and bottom controls
-    const topBarHeight = 56 + (Platform.OS === 'ios' ? 44 : 24);
-    const bottomBarHeight = 90;
-    const availableHeight = height - topBarHeight - bottomBarHeight;
+    const { width } = Dimensions.get('window');
+    // Remove height calculation from here, let the wrapper handle it
     let gridStyle: any = {
       flex: 1,
       justifyContent: 'center',
       alignItems: 'center',
       width,
     };
-    let tileStyle: any = { width: width - 32, height: availableHeight };
+    let tileStyle: any = { width: width - 32, flex: 1 };
     if (numTiles === 2) {
       gridStyle = {
         flex: 1,
@@ -199,7 +201,7 @@ const VideoRoomScreen = ({
         alignItems: 'center',
         width,
       };
-      tileStyle = { width: width - 32, height: availableHeight / 2 - 8 };
+      tileStyle = { width: width - 32, flex: 0.5, minHeight: 120 };
     } else if (numTiles > 2) {
       gridStyle = {
         flex: 1,
@@ -211,7 +213,8 @@ const VideoRoomScreen = ({
       };
       tileStyle = {
         width: (width - 40) / 2,
-        height: (availableHeight - 16) / 2,
+        flex: 0.5,
+        minHeight: 120,
       };
     }
     return (
@@ -281,70 +284,81 @@ const VideoRoomScreen = ({
           </Text>
         </View>
       )}
-      {/* Video Grid with Pagination */}
-      <FlatList
-        data={pagedUids}
-        renderItem={renderVideoPage}
-        keyExtractor={(_, idx) => `page-${idx}`}
-        horizontal
-        pagingEnabled
-        showsHorizontalScrollIndicator={false}
-        onMomentumScrollEnd={e => {
-          const page = Math.round(
-            e.nativeEvent.contentOffset.x / Dimensions.get('window').width,
-          );
-          setCurrentPage(page);
-        }}
-        style={{ flex: 1 }}
-      />
-      {/* Page Indicator (dots) */}
-      {totalPages > 1 && (
-        <View
-          style={{
-            flexDirection: 'row',
-            justifyContent: 'center',
-            alignItems: 'center',
-            paddingVertical: 8,
+      {/* Video Grid with Pagination (add wrapper with paddingBottom) */}
+      <View style={{ flex: 1, paddingBottom: 106 }}>
+        <FlatList
+          data={pagedUids}
+          renderItem={renderVideoPage}
+          keyExtractor={(_, idx) => `page-${idx}`}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          onMomentumScrollEnd={e => {
+            const page = Math.round(
+              e.nativeEvent.contentOffset.x / Dimensions.get('window').width,
+            );
+            setCurrentPage(page);
           }}
-        >
-          {Array.from({ length: totalPages }, (_, i) => (
-            <View
-              key={i}
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: 4,
-                backgroundColor:
-                  i === currentPage ? '#007AFF' : 'rgba(255,255,255,0.3)',
-                marginHorizontal: 4,
-              }}
-            />
-          ))}
-        </View>
-      )}
+          style={{ flex: 1 }}
+        />
+        {/* Page Indicator (dots) */}
+        {totalPages > 1 && (
+          <View
+            style={{
+              flexDirection: 'row',
+              justifyContent: 'center',
+              alignItems: 'center',
+              paddingVertical: 8,
+            }}
+          >
+            {Array.from({ length: totalPages }, (_, i) => (
+              <View
+                key={i}
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 4,
+                  backgroundColor:
+                    i === currentPage ? '#007AFF' : 'rgba(255,255,255,0.3)',
+                  marginHorizontal: 4,
+                }}
+              />
+            ))}
+          </View>
+        )}
+      </View>
       {/* Bottom Floating Controls */}
       <View style={styles.fabBarFixed}>
-        <TouchableOpacity style={styles.fab} onPress={toggleMic}>
-          <Text style={styles.fabIcon}>{isMicEnabled ? '🎤' : '🔇'}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.fab} onPress={toggleCamera}>
-          <Text style={styles.fabIcon}>{isCameraEnabled ? '📹' : '🚫'}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.fab} onPress={switchCamera}>
-          <Text style={styles.fabIcon}>🔄</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.fab}
-          onPress={() => setShowParticipants(true)}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.fabBarScroll}
         >
-          <Text style={styles.fabIcon}>👥</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.fab, { backgroundColor: '#dc3545' }]}
-          onPress={leave}
-        >
-          <Text style={styles.fabIcon}>🚪</Text>
-        </TouchableOpacity>
+          <TouchableOpacity style={styles.iconBtn} onPress={toggleMic}>
+            <Text style={styles.iconText}>{isMicEnabled ? '🎤' : '��'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.iconBtn} onPress={toggleCamera}>
+            <Text style={styles.iconText}>{isCameraEnabled ? '📹' : '🚫'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.iconBtn} onPress={switchCamera}>
+            <Text style={styles.iconText}>🔄</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.iconBtn}
+            onPress={() => setShowParticipants(true)}
+          >
+            <Text style={styles.iconText}>👥</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.iconBtn} onPress={leave}>
+            <Text style={styles.iconText}>🚪</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.iconBtn}
+            onPress={() => setChatVisible(true)}
+          >
+            <Text style={styles.iconText}>💬</Text>
+          </TouchableOpacity>
+        </ScrollView>
       </View>
       {/* Participants Modal */}
       {showParticipants && (
@@ -369,6 +383,14 @@ const VideoRoomScreen = ({
           </View>
         </View>
       )}
+      <CallChat
+        userId={user.id}
+        userName={user.name}
+        channelName={channelName}
+        visible={chatVisible}
+        onClose={() => setChatVisible(false)}
+        backendUrl={backendUrl}
+      />
     </SafeAreaView>
   );
 };
@@ -483,27 +505,28 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(20,20,20,0.95)',
     borderTopWidth: 1,
     borderTopColor: '#232323',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingBottom: 16,
+    paddingBottom: 12,
     paddingTop: 8,
     zIndex: 100,
   },
-  fab: {
-    backgroundColor: '#007AFF',
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+  fabBarScroll: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingHorizontal: 8,
+  },
+  iconBtn: {
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    borderRadius: 18,
+    marginHorizontal: 2,
     alignItems: 'center',
     justifyContent: 'center',
-    marginHorizontal: 10,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOpacity: 0.18,
-    shadowRadius: 8,
   },
-  fabIcon: { fontSize: 26, color: '#fff' },
+  iconText: {
+    fontSize: 28,
+    color: '#fff',
+  },
   participantModalOverlay: {
     position: 'absolute',
     top: 0,
