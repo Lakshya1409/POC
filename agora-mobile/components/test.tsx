@@ -98,10 +98,12 @@ const VideoRoomScreen = ({
 
   const join = async () => {
     try {
+      // Use UID 0 for the local user as requested
+      const localUserUid = 0;
       const response = await fetch(
         `${backendUrl}/rtcToken?channelName=${encodeURIComponent(
           channelName,
-        )}&uid=${user.id}&role=publisher`,
+        )}&uid=${localUserUid}&role=publisher`, // Pass 0 as the UID
       );
       if (!response.ok) throw new Error('Failed to fetch token from backend');
       const data = await response.json();
@@ -110,7 +112,13 @@ const VideoRoomScreen = ({
       await agoraEngineRef.current.setClientRole(
         ClientRoleType.ClientRoleBroadcaster,
       );
-      await agoraEngineRef.current.joinChannel(token, channelName, user.id, {});
+      // Join channel with UID 0
+      await agoraEngineRef.current.joinChannel(
+        token,
+        channelName,
+        localUserUid,
+        {},
+      );
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       Alert.alert('Join Failed', msg);
@@ -201,18 +209,24 @@ const VideoRoomScreen = ({
     }
   };
 
-  const allVideoUids = [0, ...remoteUids];
+  // Modified allVideoUids to include local status and name
+  // UID 0 is explicitly for the local user.
+  const allVideoUids = [
+    { uid: 0, isLocal: true, name: user.name }, // Local user is always UID 0
+    ...remoteUids.map(uid => ({ uid, isLocal: false, name: `User ${uid}` })),
+  ];
+
   const usersPerPage = 4;
   const totalPages = Math.ceil(allVideoUids.length / usersPerPage);
   // Split UIDs into pages of 4
-  const pagedUids: number[][] = [];
+  const pagedUids: { uid: number; isLocal: boolean; name: string }[][] = [];
   for (let i = 0; i < allVideoUids.length; i += usersPerPage) {
     pagedUids.push(allVideoUids.slice(i, i + usersPerPage));
   }
 
   const participants = [
     {
-      uid: 0,
+      uid: 0, // Local user is UID 0
       name: user.name,
       isLocal: true,
       mic: isMicEnabled,
@@ -228,84 +242,199 @@ const VideoRoomScreen = ({
   ];
 
   // --- Render Video Tiles for a Page ---
-  const renderVideoPage = ({ item: uids }: { item: number[] }) => {
+  const renderVideoPage = ({
+    item: uids,
+  }: {
+    item: { uid: number; isLocal: boolean; name: string }[];
+  }) => {
     const numTiles = uids.length;
-    const { width } = Dimensions.get('window');
-    // Remove height calculation from here, let the wrapper handle it
-    let gridStyle: any = {
-      flex: 1,
-      justifyContent: 'center',
-      alignItems: 'center',
-      width,
-    };
-    let tileStyle: any = { width: width - 32, flex: 1 };
-    if (numTiles === 2) {
-      gridStyle = {
-        flex: 1,
-        flexDirection: 'column',
-        justifyContent: 'center',
-        alignItems: 'center',
-        width,
-      };
-      tileStyle = { width: width - 32, flex: 0.5, minHeight: 120 };
-    } else if (numTiles > 2) {
-      gridStyle = {
-        flex: 1,
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        justifyContent: 'center',
-        alignItems: 'center',
-        width,
-      };
-      tileStyle = {
-        width: (width - 40) / 2,
-        flex: 0.5,
-        minHeight: 120,
-      };
-    }
-    return (
-      <View style={gridStyle}>
-        {uids.map((uid: number, _: number) => (
-          <View
-            key={uid}
-            style={[
-              styles.videoContainer,
-              tileStyle,
-              uid === 0 ? styles.localBorder : null,
-            ]}
-          >
-            {isEngineReady && (
-              <RtcSurfaceView
-                style={styles.videoView}
-                canvas={{
-                  uid,
-                }}
-              />
-            )}
-            <View style={styles.overlayTop}>
-              <Text style={styles.overlayText}>
-                {uid === 0 ? 'You' : `User ${uid}`}
-              </Text>
-            </View>
-            {uid === 0 && (
-              <View style={styles.overlayBottom}>
-                <Text
-                  style={{
-                    color: isCameraEnabled ? '#0f0' : '#f00',
-                    marginRight: 8,
-                  }}
-                >
-                  {isCameraEnabled ? '📹' : '🚫'}
-                </Text>
-                <Text style={{ color: isMicEnabled ? '#0f0' : '#f00' }}>
-                  {isMicEnabled ? '🎤' : '🔇'}
-                </Text>
-              </View>
-            )}
-          </View>
-        ))}
+    const { width, height } = Dimensions.get('window');
+    // Calculate available height: minus top bar and bottom controls
+    const topBarHeight = 56 + 24; // Approximate for Android/iOS
+    const bottomBarHeight = 106; // Matches paddingBottom
+    const availableHeight = height - topBarHeight - bottomBarHeight;
+    const gap = 8;
+
+    const renderTile = (
+      userItem: { uid: number; isLocal: boolean; name: string },
+      index: number,
+      style: any,
+    ) => (
+      <View key={userItem.uid} style={style}>
+        {isEngineReady && (
+          <RtcSurfaceView
+            style={styles.videoView}
+            canvas={{
+              uid: userItem.uid,
+              setupMode: userItem.isLocal
+                ? VideoSourceType.VideoSourceCamera
+                : VideoSourceType.VideoSourceRemote,
+            }}
+          />
+        )}
+        <View style={styles.overlayTop}>
+          <Text style={styles.overlayText}>
+            {userItem.isLocal ? 'You' : userItem.name || `User ${userItem.uid}`}
+          </Text>
+        </View>
       </View>
     );
+
+    if (numTiles === 1) {
+      // Single user: full tile
+      return (
+        <View
+          style={{
+            flex: 1,
+            justifyContent: 'center',
+            alignItems: 'center',
+            width,
+          }}
+        >
+          {renderTile(uids[0], 0, {
+            width: width - 32,
+            height: availableHeight,
+            borderRadius: 16,
+            overflow: 'hidden',
+          })}
+        </View>
+      );
+    } else if (numTiles === 2) {
+      // Two users: vertical split
+      return (
+        <View
+          style={{
+            flex: 1,
+            flexDirection: 'column',
+            justifyContent: 'center',
+            alignItems: 'center',
+            width,
+          }}
+        >
+          {[0, 1].map(i =>
+            renderTile(uids[i], i, {
+              width: width - 32,
+              height: (availableHeight - gap) / 2,
+              marginBottom: i === 0 ? gap : 0,
+              borderRadius: 16,
+              overflow: 'hidden',
+            }),
+          )}
+        </View>
+      );
+    } else if (numTiles === 3) {
+      // Three users: two tiles on top row, one tile on bottom row
+      const tileHeight = (availableHeight - gap) / 2;
+      const tileWidth = (width - 32 - gap) / 2;
+      return (
+        <View
+          style={{
+            flex: 1,
+            width,
+            justifyContent: 'center',
+            alignItems: 'center',
+          }}
+        >
+          <View
+            style={{
+              flexDirection: 'row',
+              width: width - 32,
+              height: tileHeight,
+              marginBottom: gap,
+            }}
+          >
+            {[0, 1].map(i =>
+              renderTile(uids[i], i, {
+                width: tileWidth,
+                height: tileHeight,
+                marginRight: i === 0 ? gap : 0,
+                borderRadius: 16,
+                overflow: 'hidden',
+              }),
+            )}
+          </View>
+          {renderTile(uids[2], 2, {
+            width: width - 32,
+            height: tileHeight,
+            borderRadius: 16,
+            overflow: 'hidden',
+          })}
+        </View>
+      );
+    } else if (numTiles === 4) {
+      // Four users: 2x2 grid of squares
+      const tileHeight = (availableHeight - gap) / 2;
+      const tileWidth = (width - 32 - gap) / 2;
+      return (
+        <View
+          style={{
+            flex: 1,
+            width,
+            justifyContent: 'center',
+            alignItems: 'center',
+          }}
+        >
+          <View
+            style={{
+              flexDirection: 'row',
+              width: width - 32,
+              height: tileHeight,
+              marginBottom: gap,
+            }}
+          >
+            {[0, 1].map(i =>
+              renderTile(uids[i], i, {
+                width: tileWidth,
+                height: tileHeight,
+                marginRight: i === 0 ? gap : 0,
+                borderRadius: 16,
+                overflow: 'hidden',
+              }),
+            )}
+          </View>
+          <View
+            style={{
+              flexDirection: 'row',
+              width: width - 32,
+              height: tileHeight,
+            }}
+          >
+            {[2, 3].map(i =>
+              renderTile(uids[i], i, {
+                width: tileWidth,
+                height: tileHeight,
+                marginRight: i === 2 ? gap : 0,
+                borderRadius: 16,
+                overflow: 'hidden',
+              }),
+            )}
+          </View>
+        </View>
+      );
+    } else {
+      // Fallback: default to vertical list (shouldn't typically happen with usersPerPage = 4)
+      return (
+        <View
+          style={{
+            flex: 1,
+            flexDirection: 'column',
+            justifyContent: 'center',
+            alignItems: 'center',
+            width,
+          }}
+        >
+          {uids.map(userItem =>
+            renderTile(userItem, userItem.uid, {
+              width: width - 32,
+              height: 120,
+              marginBottom: gap,
+              borderRadius: 16,
+              overflow: 'hidden',
+            }),
+          )}
+        </View>
+      );
+    }
   };
 
   return (
@@ -340,7 +469,7 @@ const VideoRoomScreen = ({
         <FlatList
           data={pagedUids}
           renderItem={renderVideoPage}
-          keyExtractor={(_, idx) => `page-${idx}`}
+          keyExtractor={item => `page-${item[0].uid}`} // Updated keyExtractor for pagedUids
           horizontal
           pagingEnabled
           showsHorizontalScrollIndicator={false}
@@ -352,32 +481,37 @@ const VideoRoomScreen = ({
           }}
           style={{ flex: 1 }}
         />
-        {/* Page Indicator (dots) */}
-        {totalPages > 1 && (
-          <View
-            style={{
-              flexDirection: 'row',
-              justifyContent: 'center',
-              alignItems: 'center',
-              paddingVertical: 8,
-            }}
-          >
-            {Array.from({ length: totalPages }, (_, i) => (
-              <View
-                key={i}
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: 4,
-                  backgroundColor:
-                    i === currentPage ? '#007AFF' : 'rgba(255,255,255,0.3)',
-                  marginHorizontal: 4,
-                }}
-              />
-            ))}
-          </View>
-        )}
       </View>
+      {/* Page Indicator (dots) - absolutely above the control bar */}
+      {totalPages > 1 && (
+        <View
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            bottom: 80, // just above the control bar (fabBarFixed)
+            flexDirection: 'row',
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 150,
+            paddingVertical: 4,
+          }}
+        >
+          {Array.from({ length: totalPages }, (_, i) => (
+            <View
+              key={i}
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: 4,
+                backgroundColor:
+                  i === currentPage ? '#007AFF' : 'rgba(255,255,255,0.3)',
+                marginHorizontal: 4,
+              }}
+            />
+          ))}
+        </View>
+      )}
       {/* Bottom Floating Controls */}
       <View style={styles.fabBarFixed}>
         <ScrollView
@@ -646,6 +780,19 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     marginTop: 18,
+  },
+  placeholderBg: {
+    flex: 1,
+    backgroundColor: '#2d3748',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 16,
+  },
+  placeholderText: {
+    color: '#fff',
+    fontSize: 36,
+    fontWeight: '700',
+    letterSpacing: 1,
   },
 });
 
