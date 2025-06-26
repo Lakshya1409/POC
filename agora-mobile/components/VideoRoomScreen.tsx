@@ -15,8 +15,9 @@ import {
   createAgoraRtcEngine,
   ChannelProfileType,
   RtcSurfaceView,
+  VideoSourceType,
 } from 'react-native-agora';
-import CallChat from './CallChat';
+// import CallChat from './CallChat';
 
 const backendUrl = 'http://172.16.11.52:8001';
 // const backendUrl='http://192.168.0.105:8001'
@@ -44,6 +45,7 @@ const VideoRoomScreen = ({
   const agoraEngineRef = useRef<any>(null);
   const [currentPage, setCurrentPage] = useState(0);
   const [chatVisible, setChatVisible] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
 
   useEffect(() => {
     const setup = async () => {
@@ -155,6 +157,50 @@ const VideoRoomScreen = ({
     }
   };
 
+  // --- Screen Sharing Logic ---
+  const startScreenShare = async () => {
+    if (!agoraEngineRef.current) return;
+    try {
+      await agoraEngineRef.current.startScreenCapture({
+        captureAudio: true,
+        captureVideo: true,
+        videoCaptureParameters: {
+          dimensions: { width: 1280, height: 720 },
+          frameRate: 15,
+          bitrate: 2000,
+        },
+        audioCaptureParameters: {
+          sampleRate: 44100,
+          channel: 2,
+          captureSignalVolume: 100,
+        },
+      });
+      await agoraEngineRef.current.updateChannelMediaOptions({
+        publishCameraTrack: false,
+        publishScreenCaptureVideo: true,
+        publishScreenCaptureAudio: true,
+      });
+      setIsScreenSharing(true);
+    } catch (error) {
+      Alert.alert('Screen Share Error', String(error));
+    }
+  };
+
+  const stopScreenShare = async () => {
+    if (!agoraEngineRef.current) return;
+    try {
+      await agoraEngineRef.current.stopScreenCapture();
+      await agoraEngineRef.current.updateChannelMediaOptions({
+        publishCameraTrack: true,
+        publishScreenCaptureVideo: false,
+        publishScreenCaptureAudio: false,
+      });
+      setIsScreenSharing(false);
+    } catch (error) {
+      Alert.alert('Screen Share Error', String(error));
+    }
+  };
+
   const allVideoUids = [0, ...remoteUids];
   const usersPerPage = 4;
   const totalPages = Math.ceil(allVideoUids.length / usersPerPage);
@@ -229,7 +275,16 @@ const VideoRoomScreen = ({
             ]}
           >
             {isEngineReady && (
-              <RtcSurfaceView style={styles.videoView} canvas={{ uid }} />
+              <RtcSurfaceView
+                style={styles.videoView}
+                canvas={{
+                  uid,
+                  sourceType:
+                    uid === 0 && isScreenSharing
+                      ? VideoSourceType.VideoSourceScreen
+                      : VideoSourceType.VideoSourceCamera,
+                }}
+              />
             )}
             <View style={styles.overlayTop}>
               <Text style={styles.overlayText}>
@@ -335,13 +390,22 @@ const VideoRoomScreen = ({
           contentContainerStyle={styles.fabBarScroll}
         >
           <TouchableOpacity style={styles.iconBtn} onPress={toggleMic}>
-            <Text style={styles.iconText}>{isMicEnabled ? '🎤' : '��'}</Text>
+            <Text style={styles.iconText}>{isMicEnabled ? '🎤' : '🔇'}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.iconBtn} onPress={toggleCamera}>
             <Text style={styles.iconText}>{isCameraEnabled ? '📹' : '🚫'}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.iconBtn} onPress={switchCamera}>
             <Text style={styles.iconText}>🔄</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.iconBtn,
+              isScreenSharing && { backgroundColor: '#007AFF' },
+            ]}
+            onPress={isScreenSharing ? stopScreenShare : startScreenShare}
+          >
+            <Text style={styles.iconText}>{isScreenSharing ? '🛑' : '🖥️'}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.iconBtn}
@@ -352,14 +416,33 @@ const VideoRoomScreen = ({
           <TouchableOpacity style={styles.iconBtn} onPress={leave}>
             <Text style={styles.iconText}>🚪</Text>
           </TouchableOpacity>
-          <TouchableOpacity
+          {/* <TouchableOpacity
             style={styles.iconBtn}
             onPress={() => setChatVisible(true)}
           >
             <Text style={styles.iconText}>💬</Text>
-          </TouchableOpacity>
+          </TouchableOpacity> */}
         </ScrollView>
       </View>
+      {/* Screen Sharing Banner */}
+      {isScreenSharing && (
+        <View
+          style={{
+            position: 'absolute',
+            top: 60,
+            left: 0,
+            right: 0,
+            backgroundColor: '#007AFF',
+            padding: 8,
+            zIndex: 200,
+            alignItems: 'center',
+          }}
+        >
+          <Text style={{ color: '#fff', fontWeight: 'bold' }}>
+            You are sharing your screen
+          </Text>
+        </View>
+      )}
       {/* Participants Modal */}
       {showParticipants && (
         <View style={styles.participantModalOverlay}>
@@ -383,14 +466,14 @@ const VideoRoomScreen = ({
           </View>
         </View>
       )}
-      <CallChat
+      {/* <CallChat
         userId={user.id}
         userName={user.name}
         channelName={channelName}
         visible={chatVisible}
         onClose={() => setChatVisible(false)}
         backendUrl={backendUrl}
-      />
+      /> */}
     </SafeAreaView>
   );
 };
