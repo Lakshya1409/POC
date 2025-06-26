@@ -279,10 +279,6 @@ const VideoRoomScreen = ({
                 style={styles.videoView}
                 canvas={{
                   uid,
-                  sourceType:
-                    uid === 0 && isScreenSharing
-                      ? VideoSourceType.VideoSourceScreen
-                      : VideoSourceType.VideoSourceCamera,
                 }}
               />
             )}
